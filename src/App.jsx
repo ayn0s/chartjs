@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   Chart as ChartJS,
   Legend,
@@ -51,19 +51,25 @@ const formatValue = (value) => {
   return value.toFixed(2)
 }
 
-const INITIAL_TIME_ANCHOR = Date.now() - 5_000
-
 function App() {
   const chartRef = useRef(null)
   const screenCursorIndexRef = useRef(2)
-  const timeCursorIndexRef = useRef(2)
   const [isPaused, setIsPaused] = useState(false)
   const [cursorValues, setCursorValues] = useState({
-    screenTimestamp: null,
-    timeTimestamp: null,
-    screenCursors: [],
-    timeCursors: [],
+    primaryTimestamp: null,
+    cursors: [],
   })
+
+  const handleCursorsUpdate = useCallback((payload) => {
+    setCursorValues({
+      primaryTimestamp: payload?.primaryTimestamp ?? payload?.screenTimestamp ?? null,
+      cursors: Array.isArray(payload?.cursors)
+        ? payload.cursors
+        : Array.isArray(payload?.screenCursors)
+          ? payload.screenCursors
+          : [],
+    })
+  }, [])
 
   const addScreenCursor = () => {
     const nextIndex = screenCursorIndexRef.current
@@ -79,29 +85,6 @@ function App() {
     })
 
     screenCursorIndexRef.current = nextIndex + 1
-  }
-
-  const addTimeCursor = () => {
-    const chart = chartRef.current
-    const timestamp =
-      typeof cursorValues.screenTimestamp === 'number'
-        ? cursorValues.screenTimestamp
-        : typeof cursorValues.timeTimestamp === 'number'
-          ? cursorValues.timeTimestamp
-          : INITIAL_TIME_ANCHOR
-
-    const palette = ['#117a65', '#c2571a', '#5f3dc4', '#0b5fff', '#9b2226']
-  const nextIndex = timeCursorIndexRef.current
-    const color = palette[(nextIndex - 1) % palette.length]
-
-    chart?.$hybridCursorApi?.addTimeCursor({
-      id: `time-${nextIndex}`,
-      timestamp,
-      color,
-      lineWidth: 2,
-    })
-
-    timeCursorIndexRef.current = nextIndex + 1
   }
 
   const data = useMemo(
@@ -222,12 +205,11 @@ function App() {
         },
         hybridCursorPlugin: {
           screenCursors: [{ id: 'screen-1', ratio: 0.5, color: '#e34f24', lineWidth: 2 }],
-          timeCursors: [{ id: 'time-1', timestamp: INITIAL_TIME_ANCHOR, color: '#117a65', lineWidth: 2 }],
-          onValuesUpdate: setCursorValues,
+          onCursorsUpdate: handleCursorsUpdate,
         },
       },
     }),
-    [isPaused],
+    [handleCursorsUpdate, isPaused],
   )
 
   return (
@@ -240,9 +222,6 @@ function App() {
           <button type="button" className="control-btn secondary" onClick={addScreenCursor}>
             Ajouter un screen curseur
           </button>
-          <button type="button" className="control-btn secondary" onClick={addTimeCursor}>
-            Ajouter un curseur temporel
-          </button>
         </div>
 
         <div className="chart-wrap">
@@ -252,21 +231,17 @@ function App() {
         <div className="cursor-panel">
           <p>
             <span className="label">Screen Cursor (drag horizontal)</span>
-            <span className="value">{formatTimestamp(cursorValues.screenTimestamp)}</span>
-          </p>
-          <p>
-            <span className="label">Time Cursor (drag horizontal)</span>
-            <span className="value">{formatTimestamp(cursorValues.timeTimestamp)}</span>
+            <span className="value">{formatTimestamp(cursorValues.primaryTimestamp)}</span>
           </p>
         </div>
 
         <div className="cursor-list">
           <p className="list-title">Screen curseurs actifs</p>
-          {cursorValues.screenCursors.length === 0 ? (
+          {cursorValues.cursors.length === 0 ? (
             <p className="empty">Aucun screen curseur.</p>
           ) : (
             <ul>
-              {cursorValues.screenCursors.map((cursor) => (
+              {cursorValues.cursors.map((cursor) => (
                 <li key={cursor.id}>
                   <span className="dot" style={{ backgroundColor: cursor.color }} />
                   <span>{cursor.id}</span>
@@ -285,33 +260,8 @@ function App() {
           )}
         </div>
 
-        <div className="cursor-list">
-          <p className="list-title">Curseurs temporels actifs</p>
-          {cursorValues.timeCursors.length === 0 ? (
-            <p className="empty">Aucun curseur temporel.</p>
-          ) : (
-            <ul>
-              {cursorValues.timeCursors.map((cursor) => (
-                <li key={cursor.id}>
-                  <span className="dot" style={{ backgroundColor: cursor.color }} />
-                  <span>{cursor.id}</span>
-                  <code>{formatTimestamp(cursor.timestamp)}</code>
-                  <code>{formatValue(cursor.value)}</code>
-                  <button
-                    type="button"
-                    className="small-btn"
-                    onClick={() => chartRef.current?.$hybridCursorApi?.removeTimeCursor(cursor.id)}
-                  >
-                    Supprimer
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
         <p className="hint">
-          Glisser un curseur avec la souris ou le doigt. Zoom: molette/pinch. Pan: maintenir <code>Shift</code> + glisser.
+          Glisser un screen curseur avec la souris ou le doigt. Zoom: molette/pinch. Pan: maintenir <code>Shift</code> + glisser.
         </p>
       </section>
     </main>
