@@ -1,34 +1,8 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
-import {
-  Chart as ChartJS,
-  Legend,
-  LineElement,
-  LinearScale,
-  PointElement,
-  TimeScale,
-  Title,
-  Tooltip,
-} from 'chart.js'
-import 'hammerjs'
-import zoomPlugin from 'chartjs-plugin-zoom'
-import streamingPlugin from 'chartjs-plugin-streaming'
-import 'chartjs-adapter-date-fns'
-import { Line } from 'react-chartjs-2'
-import { hybridCursorPlugin } from './plugins/hybridCursorPlugin'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import uPlot from 'uplot'
+import 'uplot/dist/uPlot.min.css'
+import { createUplotScreenCursorPlugin } from './plugins/uplotScreenCursorPlugin'
 import './App.css'
-
-ChartJS.register(
-  LineElement,
-  PointElement,
-  LinearScale,
-  TimeScale,
-  Tooltip,
-  Legend,
-  Title,
-  streamingPlugin,
-  zoomPlugin,
-  hybridCursorPlugin,
-)
 
 const formatTimestamp = (value) => {
   if (typeof value !== 'number' || Number.isNaN(value)) {
@@ -52,7 +26,10 @@ const formatValue = (value) => {
 }
 
 function App() {
-  const chartRef = useRef(null)
+  const plotHostRef = useRef(null)
+  const uplotRef = useRef(null)
+  const dataRef = useRef([[], []])
+  const panStateRef = useRef({ active: false, startX: 0, min: 0, max: 0 })
   const screenCursorIndexRef = useRef(2)
   const [isPaused, setIsPaused] = useState(false)
   const [cursorValues, setCursorValues] = useState({
@@ -73,11 +50,11 @@ function App() {
 
   const addScreenCursor = () => {
     const nextIndex = screenCursorIndexRef.current
-    const chart = chartRef.current
+    const u = uplotRef.current
     const palette = ['#e34f24', '#ff7f11', '#b54708', '#8a3ffc', '#3d5a80']
     const color = palette[(nextIndex - 1) % palette.length]
 
-    chart?.$hybridCursorApi?.addScreenCursor({
+    u?.screenCursorApi?.addCursor({
       id: `screen-${nextIndex}`,
       ratio: 0.5,
       color,
@@ -87,130 +64,181 @@ function App() {
     screenCursorIndexRef.current = nextIndex + 1
   }
 
-  const data = useMemo(
-    () => ({
-      datasets: [
-        {
-          label: 'Flux mockup (500ms)',
-          data: [],
-          borderColor: '#0b5fff',
-          backgroundColor: 'rgba(11, 95, 255, 0.25)',
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.2,
-          fill: true,
-        },
-      ],
-    }),
-    [],
+  const cursorPlugin = useMemo(
+    () =>
+      createUplotScreenCursorPlugin({
+        cursors: [{ id: 'screen-1', ratio: 0.5, color: '#e34f24', lineWidth: 2 }],
+        onCursorsUpdate: handleCursorsUpdate,
+        seriesIndices: [1],
+      }),
+    [handleCursorsUpdate],
   )
 
-  const options = useMemo(
-    () => ({
-      maintainAspectRatio: false,
-      responsive: true,
-      animation: false,
-      parsing: false,
-      normalized: true,
-      events: [
-        'pointerdown',
-        'pointermove',
-        'pointerup',
-        'pointercancel',
-        'mousedown',
-        'mouseup',
-        'mousemove',
-        'mouseout',
-        'touchstart',
-        'touchmove',
-        'touchend',
-      ],
-      scales: {
-        x: {
-          type: 'realtime',
-          realtime: {
-            duration: 25_000,
-            delay: 1_500,
-            refresh: 500,
-            frameRate: 30,
-            pause: isPaused,
-            onRefresh: (chart) => {
-              if (isPaused) {
-                return
-              }
+  useEffect(() => {
+    const host = plotHostRef.current
+    if (!host) {
+      return undefined
+    }
 
-              const nextY = 55 + Math.sin(Date.now() / 2_400) * 15 + Math.random() * 8
-              chart.data.datasets[0].data.push({
-                x: Date.now(),
-                y: Math.max(5, Math.min(95, Number(nextY.toFixed(2)))),
-              })
-            },
+    const now = Date.now()
+    const xs = []
+    const ys = []
+
+    for (let i = 49; i >= 0; i -= 1) {
+      const x = now - i * 500
+      const y = 55 + Math.sin(x / 2400) * 15 + Math.random() * 8
+      xs.push(x)
+      ys.push(Math.max(5, Math.min(95, Number(y.toFixed(2)))))
+    }
+
+    dataRef.current = [xs, ys]
+
+    const u = new uPlot(
+      {
+        width: host.clientWidth,
+        height: 420,
+        ms: 1,
+        scales: {
+          x: { time: false },
+          y: { auto: true },
+        },
+        axes: [
+          {
+            stroke: '#3a4c66',
+            grid: { stroke: 'rgba(18, 31, 54, 0.08)' },
+            values: (_u, values) => values.map((v) => formatTimestamp(v)),
           },
-          ticks: {
-            color: '#3a4c66',
-            maxRotation: 0,
-            autoSkipPadding: 32,
+          {
+            stroke: '#3a4c66',
+            grid: { stroke: 'rgba(18, 31, 54, 0.08)' },
           },
-          grid: {
-            color: 'rgba(18, 31, 54, 0.08)',
-            borderColor: 'rgba(18, 31, 54, 0.18)',
+        ],
+        series: [
+          {},
+          {
+            label: 'Flux mockup (500ms)',
+            stroke: '#0b5fff',
+            width: 2,
+          },
+        ],
+        cursor: {
+          drag: {
+            x: false,
+            y: false,
+            setScale: false,
           },
         },
-        y: {
-          suggestedMin: 0,
-          suggestedMax: 100,
-          ticks: {
-            color: '#3a4c66',
-          },
-          grid: {
-            color: 'rgba(18, 31, 54, 0.08)',
-            borderColor: 'rgba(18, 31, 54, 0.18)',
-          },
-        },
+        plugins: [cursorPlugin],
       },
-      interaction: {
-        intersect: false,
-        mode: 'nearest',
-      },
-      plugins: {
-        legend: {
-          labels: {
-            color: '#10223e',
-          },
-        },
-        title: {
-          display: true,
-          text: 'Chart.js Realtime + Hybrid Cursor Plugin',
-          color: '#0d1e35',
-          font: {
-            size: 16,
-            weight: '600',
-          },
-        },
-        zoom: {
-          pan: {
-            enabled: true,
-            mode: 'x',
-            modifierKey: 'shift',
-          },
-          zoom: {
-            wheel: {
-              enabled: true,
-            },
-            pinch: {
-              enabled: true,
-            },
-            mode: 'x',
-          },
-        },
-        hybridCursorPlugin: {
-          screenCursors: [{ id: 'screen-1', ratio: 0.5, color: '#e34f24', lineWidth: 2 }],
-          onCursorsUpdate: handleCursorsUpdate,
-        },
-      },
-    }),
-    [handleCursorsUpdate, isPaused],
-  )
+      dataRef.current,
+      host,
+    )
+
+    uplotRef.current = u
+
+    const onWheel = (event) => {
+      event.preventDefault()
+      const { min, max } = u.scales.x
+      if (!Number.isFinite(min) || !Number.isFinite(max)) {
+        return
+      }
+
+      const factor = event.deltaY > 0 ? 1.12 : 0.88
+      const mouseX = event.offsetX
+      const center = u.posToVal(mouseX, 'x')
+      const nextMin = center - (center - min) * factor
+      const nextMax = center + (max - center) * factor
+      u.setScale('x', { min: nextMin, max: nextMax })
+    }
+
+    const onMouseDown = (event) => {
+      if (!event.shiftKey) {
+        return
+      }
+
+      const { min, max } = u.scales.x
+      if (!Number.isFinite(min) || !Number.isFinite(max)) {
+        return
+      }
+
+      panStateRef.current = {
+        active: true,
+        startX: event.clientX,
+        min,
+        max,
+      }
+    }
+
+    const onMouseMove = (event) => {
+      const pan = panStateRef.current
+      if (!pan.active) {
+        return
+      }
+
+      const deltaPx = event.clientX - pan.startX
+      const deltaVal = u.posToVal(0, 'x') - u.posToVal(deltaPx, 'x')
+      u.setScale('x', {
+        min: pan.min + deltaVal,
+        max: pan.max + deltaVal,
+      })
+    }
+
+    const onMouseUp = () => {
+      panStateRef.current.active = false
+    }
+
+    u.root.addEventListener('wheel', onWheel, { passive: false })
+    u.root.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+
+    const onResize = () => {
+      u.setSize({ width: host.clientWidth, height: 420 })
+    }
+    window.addEventListener('resize', onResize)
+
+    return () => {
+      window.removeEventListener('resize', onResize)
+      u.root.removeEventListener('wheel', onWheel)
+      u.root.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      u.destroy()
+      uplotRef.current = null
+    }
+  }, [cursorPlugin])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (isPaused) {
+        return
+      }
+
+      const u = uplotRef.current
+      if (!u) {
+        return
+      }
+
+      const now = Date.now()
+      const nextY = 55 + Math.sin(now / 2400) * 15 + Math.random() * 8
+      const boundedY = Math.max(5, Math.min(95, Number(nextY.toFixed(2))))
+
+      const xs = [...dataRef.current[0], now]
+      const ys = [...dataRef.current[1], boundedY]
+      const maxPoints = 120
+
+      if (xs.length > maxPoints) {
+        xs.splice(0, xs.length - maxPoints)
+        ys.splice(0, ys.length - maxPoints)
+      }
+
+      dataRef.current = [xs, ys]
+      u.setData(dataRef.current)
+      u.setScale('x', { min: now - 25000, max: now })
+    }, 500)
+
+    return () => clearInterval(timer)
+  }, [isPaused])
 
   return (
     <main className="page">
@@ -224,9 +252,7 @@ function App() {
           </button>
         </div>
 
-        <div className="chart-wrap">
-          <Line ref={chartRef} data={data} options={options} />
-        </div>
+        <div className="chart-wrap" ref={plotHostRef} />
 
         <div className="cursor-panel">
           <p>
@@ -250,7 +276,7 @@ function App() {
                   <button
                     type="button"
                     className="small-btn"
-                    onClick={() => chartRef.current?.$hybridCursorApi?.removeScreenCursor(cursor.id)}
+                    onClick={() => uplotRef.current?.screenCursorApi?.removeCursor(cursor.id)}
                   >
                     Supprimer
                   </button>
