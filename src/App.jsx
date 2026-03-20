@@ -66,15 +66,150 @@ const formatValue = (value) => {
   return value.toFixed(2)
 }
 
+const formatDuration = (ms) => {
+  if (!Number.isFinite(ms) || ms < 0) {
+    return 'N/A'
+  }
+
+  const totalSeconds = ms / 1000
+  if (totalSeconds < 60) {
+    return `${totalSeconds.toFixed(2)} s`
+  }
+
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds - minutes * 60
+  return `${minutes}m ${seconds.toFixed(2)}s`
+}
+
+function interpolateAt(xs, ys, x) {
+  if (!Array.isArray(xs) || !Array.isArray(ys) || xs.length === 0) {
+    return null
+  }
+
+  const n = Math.min(xs.length, ys.length)
+  if (n === 0 || !Number.isFinite(x)) {
+    return null
+  }
+
+  if (x <= xs[0]) {
+    const y0 = Number(ys[0])
+    return Number.isFinite(y0) ? y0 : null
+  }
+
+  const last = n - 1
+  if (x >= xs[last]) {
+    const yl = Number(ys[last])
+    return Number.isFinite(yl) ? yl : null
+  }
+
+  let lo = 0
+  let hi = last
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1
+    if (xs[mid] <= x) {
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+
+  const x0 = Number(xs[lo])
+  const x1 = Number(xs[hi])
+  const y0 = Number(ys[lo])
+  const y1 = Number(ys[hi])
+
+  if (!Number.isFinite(x0) || !Number.isFinite(x1) || !Number.isFinite(y0) || !Number.isFinite(y1)) {
+    return null
+  }
+
+  const span = x1 - x0
+  if (span <= 0) {
+    return y1
+  }
+
+  const t = (x - x0) / span
+  return y0 + (y1 - y0) * t
+}
+
+function percentile(values, q) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return null
+  }
+
+  const pos = (values.length - 1) * q
+  const base = Math.floor(pos)
+  const rest = pos - base
+
+  if (base + 1 < values.length) {
+    return values[base] + rest * (values[base + 1] - values[base])
+  }
+
+  return values[base]
+}
+
+function computeDatasetStats(xs, ys, startTs, endTs) {
+  const tMin = Math.min(startTs, endTs)
+  const tMax = Math.max(startTs, endTs)
+  const n = Math.min(xs.length, ys.length)
+
+  if (n === 0 || !Number.isFinite(tMin) || !Number.isFinite(tMax)) {
+    return null
+  }
+
+  const startValue = interpolateAt(xs, ys, tMin)
+  const endValue = interpolateAt(xs, ys, tMax)
+
+  const values = []
+  if (Number.isFinite(startValue)) {
+    values.push(startValue)
+  }
+
+  for (let i = 0; i < n; i += 1) {
+    const x = Number(xs[i])
+    const y = Number(ys[i])
+    if (x > tMin && x < tMax && Number.isFinite(y)) {
+      values.push(y)
+    }
+  }
+
+  if (Number.isFinite(endValue)) {
+    values.push(endValue)
+  }
+
+  if (values.length === 0) {
+    return null
+  }
+
+  const sorted = [...values].sort((a, b) => a - b)
+  const sum = values.reduce((acc, value) => acc + value, 0)
+  const mean = sum / values.length
+  const variance =
+    values.reduce((acc, value) => acc + (value - mean) ** 2, 0) / values.length
+  const stdDev = Math.sqrt(variance)
+
+  return {
+    count: values.length,
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+    mean,
+    median: percentile(sorted, 0.5),
+    p95: percentile(sorted, 0.95),
+    stdDev,
+    startValue,
+    endValue,
+    delta: Number.isFinite(startValue) && Number.isFinite(endValue) ? endValue - startValue : null,
+  }
+}
+
 function App() {
   const plotHostRef = useRef(null)
   const uplotRef = useRef(null)
   const dataRef = useRef([[], [], [], []])
   const panStateRef = useRef({ active: false, startX: 0, min: 0, max: 0 })
-  const screenCursorIndexRef = useRef(2)
   const [isPaused, setIsPaused] = useState(false)
   const [showPoints, setShowPoints] = useState(false)
   const [seriesVisibility, setSeriesVisibility] = useState([true, true, true])
+  const [dataSnapshot, setDataSnapshot] = useState([[], [], [], []])
   const [cursorValues, setCursorValues] = useState({
     primaryTimestamp: null,
     cursors: [],
@@ -91,26 +226,44 @@ function App() {
     })
   }, [])
 
-  const addScreenCursor = () => {
-    const nextIndex = screenCursorIndexRef.current
-    const u = uplotRef.current
-    const palette = ['#e34f24', '#ff7f11', '#b54708', '#8a3ffc', '#3d5a80']
-    const color = palette[(nextIndex - 1) % palette.length]
+  const rangeStats = useMemo(() => {
+    const xs = dataSnapshot[0] ?? []
+    const sortedCursors = [...(cursorValues.cursors ?? [])]
+      .filter((cursor) => Number.isFinite(cursor.timestamp))
+      .sort((a, b) => a.timestamp - b.timestamp)
 
-    u?.screenCursorApi?.addCursor({
-      id: `screen-${nextIndex}`,
-      ratio: 0.5,
-      color,
-      lineWidth: 2,
+    if (sortedCursors.length < 2) {
+      return null
+    }
+
+    const left = sortedCursors[0]
+    const right = sortedCursors[1]
+
+    const datasets = SERIES_CONFIG.map((series, index) => {
+      const ys = dataSnapshot[index + 1] ?? []
+      const stats = computeDatasetStats(xs, ys, left.timestamp, right.timestamp)
+      return {
+        ...series,
+        visible: seriesVisibility[index],
+        stats,
+      }
     })
 
-    screenCursorIndexRef.current = nextIndex + 1
-  }
+    return {
+      left,
+      right,
+      durationMs: right.timestamp - left.timestamp,
+      datasets,
+    }
+  }, [cursorValues.cursors, dataSnapshot, seriesVisibility])
 
   const cursorPlugin = useMemo(
     () =>
       createUplotScreenCursorPlugin({
-        cursors: [{ id: 'screen-1', ratio: 0.5, color: '#e34f24', lineWidth: 2 }],
+        cursors: [
+          { id: 'A', ratio: 0.35, color: '#f97316', lineWidth: 2 },
+          { id: 'B', ratio: 0.65, color: '#22c55e', lineWidth: 2 },
+        ],
         onCursorsUpdate: handleCursorsUpdate,
       }),
     [handleCursorsUpdate],
@@ -140,6 +293,7 @@ function App() {
       }
 
       dataRef.current = [xs, ys1, ys2, ys3]
+      setDataSnapshot(dataRef.current)
     }
 
     const u = new uPlot(
@@ -324,6 +478,7 @@ function App() {
       }
 
       dataRef.current = [xs, ys1, ys2, ys3]
+      setDataSnapshot(dataRef.current)
       u.setData(dataRef.current)
       u.setScale('x', { min: latestX - WINDOW_MS, max: latestX })
     }, UPDATE_INTERVAL_MS)
@@ -337,9 +492,6 @@ function App() {
         <div className="controls">
           <button type="button" className="control-btn" onClick={() => setIsPaused((v) => !v)}>
             {isPaused ? 'Reprendre le defilement' : 'Arreter le defilement'}
-          </button>
-          <button type="button" className="control-btn secondary" onClick={addScreenCursor}>
-            Ajouter un screen curseur
           </button>
           <label className="refresh-control">
             <input
@@ -376,13 +528,21 @@ function App() {
 
         <div className="cursor-panel">
           <p>
-            <span className="label">Screen Cursor (drag horizontal)</span>
-            <span className="value">{formatTimestamp(cursorValues.primaryTimestamp)}</span>
+            <span className="label">Curseur A</span>
+            <span className="value">{formatTimestamp(rangeStats?.left?.timestamp)}</span>
+          </p>
+          <p>
+            <span className="label">Curseur B</span>
+            <span className="value">{formatTimestamp(rangeStats?.right?.timestamp)}</span>
+          </p>
+          <p>
+            <span className="label">Intervalle</span>
+            <span className="value">{formatDuration(rangeStats?.durationMs)}</span>
           </p>
         </div>
 
         <div className="cursor-list">
-          <p className="list-title">Screen curseurs actifs</p>
+          <p className="list-title">Curseurs actifs</p>
           {cursorValues.cursors.length === 0 ? (
             <p className="empty">Aucun screen curseur.</p>
           ) : (
@@ -393,21 +553,60 @@ function App() {
                   <span>{cursor.id}</span>
                   <code>{formatTimestamp(cursor.timestamp)}</code>
                   <code>{formatValue(cursor.value)}</code>
-                  <button
-                    type="button"
-                    className="small-btn"
-                    onClick={() => uplotRef.current?.screenCursorApi?.removeCursor(cursor.id)}
-                  >
-                    Supprimer
-                  </button>
                 </li>
               ))}
             </ul>
           )}
         </div>
 
+        <div className="stats-block">
+          <p className="list-title">Statistiques par dataset (entre A et B)</p>
+          {!rangeStats ? (
+            <p className="empty">Place deux curseurs pour afficher les stats.</p>
+          ) : (
+            <div className="stats-table-wrap">
+              <table className="stats-table">
+                <thead>
+                  <tr>
+                    <th>Dataset</th>
+                    <th>Count</th>
+                    <th>Min</th>
+                    <th>Max</th>
+                    <th>Moyenne</th>
+                    <th>Mediane</th>
+                    <th>P95</th>
+                    <th>Std</th>
+                    <th>Debut</th>
+                    <th>Fin</th>
+                    <th>Delta</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rangeStats.datasets.map((dataset) => (
+                    <tr key={dataset.id} className={dataset.visible ? '' : 'row-muted'}>
+                      <td>
+                        <span className="dot" style={{ backgroundColor: dataset.stroke }} /> {dataset.label}
+                      </td>
+                      <td>{dataset.stats?.count ?? 'N/A'}</td>
+                      <td>{formatValue(dataset.stats?.min)}</td>
+                      <td>{formatValue(dataset.stats?.max)}</td>
+                      <td>{formatValue(dataset.stats?.mean)}</td>
+                      <td>{formatValue(dataset.stats?.median)}</td>
+                      <td>{formatValue(dataset.stats?.p95)}</td>
+                      <td>{formatValue(dataset.stats?.stdDev)}</td>
+                      <td>{formatValue(dataset.stats?.startValue)}</td>
+                      <td>{formatValue(dataset.stats?.endValue)}</td>
+                      <td>{formatValue(dataset.stats?.delta)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
         <p className="hint">
-          Glisser un screen curseur avec la souris ou le doigt. Zoom: molette/pinch. Pan: maintenir <code>Shift</code> + glisser.
+          Glisser les curseurs A et B pour recalculer les stats en direct. Zoom: molette/pinch. Pan: maintenir <code>Shift</code> + glisser.
         </p>
       </section>
     </main>
