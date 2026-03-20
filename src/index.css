@@ -1,12 +1,12 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
 :root {
-  --ink-900: #071625;
-  --ink-700: #1a395c;
-  --ink-500: #406182;
-  --paper: #f3f8ff;
-  --paper-strong: #ffffff;
-  --code-bg: rgba(20, 43, 76, 0.1);
+  --ink-900: #e6edf7;
+  --ink-700: #b8c7e3;
+  --ink-500: #97abcf;
+  --paper: #0a1020;
+  --paper-strong: #101a30;
+  --code-bg: rgba(148, 163, 184, 0.16);
   --font-main: 'Space Grotesk', 'Segoe UI', sans-serif;
   --font-mono: 'IBM Plex Mono', Consolas, monospace;
 }
@@ -21,9 +21,9 @@ body {
   color: var(--ink-900);
   min-height: 100svh;
   background:
-    radial-gradient(circle at 15% 18%, rgba(145, 202, 255, 0.36), transparent 30%),
-    radial-gradient(circle at 88% 82%, rgba(133, 216, 189, 0.34), transparent 28%),
-    linear-gradient(160deg, var(--paper) 0%, #dbeaff 50%, #e8f4ff 100%);
+    radial-gradient(circle at 12% 14%, rgba(66, 225, 255, 0.15), transparent 34%),
+    radial-gradient(circle at 86% 88%, rgba(102, 126, 234, 0.2), transparent 32%),
+    linear-gradient(165deg, var(--paper) 0%, #0d162c 55%, #08101f 100%);
 }
 
 #root {
@@ -35,5 +35,5 @@ code {
   border-radius: 6px;
   padding: 0.12rem 0.45rem;
   background: var(--code-bg);
-  color: var(--ink-700);
+  color: #e8f0ff;
 }

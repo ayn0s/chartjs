@@ -42,7 +42,10 @@ function resolveInitialCursors(options) {
 }
 
 function resolveSeriesIndices(u, options) {
-  const configured = options?.seriesIndices
+  const configured =
+    typeof options?.seriesIndices === 'function'
+      ? options.seriesIndices(u)
+      : options?.seriesIndices
   const maxSeries = u.series.length - 1
 
   if (Array.isArray(configured) && configured.length > 0) {
@@ -51,7 +54,14 @@ function resolveSeriesIndices(u, options) {
     )
   }
 
-  return maxSeries >= 1 ? [1] : []
+  const visible = []
+  for (let i = 1; i <= maxSeries; i += 1) {
+    if (u.series?.[i]?.show !== false) {
+      visible.push(i)
+    }
+  }
+
+  return visible
 }
 
 function interpolateAt(xs, ys, x) {
@@ -135,6 +145,21 @@ function ratioToTimestamp(u, ratio) {
   }
 
   return min + clamp(ratio, 0, 1) * (max - min)
+}
+
+function drawRoundedRect(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.lineTo(x + width - r, y)
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r)
+  ctx.lineTo(x + width, y + height - r)
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height)
+  ctx.lineTo(x + r, y + height)
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r)
+  ctx.lineTo(x, y + r)
+  ctx.quadraticCurveTo(x, y, x + r, y)
+  ctx.closePath()
 }
 
 export function createUplotScreenCursorPlugin(options = {}) {
@@ -352,6 +377,25 @@ export function createUplotScreenCursorPlugin(options = {}) {
             ctx.moveTo(xPx, top)
             ctx.lineTo(xPx, top + height)
             ctx.stroke()
+
+            const label = String(cursor.id)
+            ctx.font = '600 11px Space Grotesk, Segoe UI, sans-serif'
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+
+            const textPaddingX = 9
+            const boxHeight = 20
+            const textWidth = ctx.measureText(label).width
+            const boxWidth = Math.max(40, textWidth + textPaddingX * 2)
+            const boxX = clamp(xPx - boxWidth / 2, left, left + width - boxWidth)
+            const boxY = top + 6
+
+            drawRoundedRect(ctx, boxX, boxY, boxWidth, boxHeight, 7)
+            ctx.fillStyle = cursor.color
+            ctx.fill()
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.98)'
+            ctx.fillText(label, boxX + boxWidth / 2, boxY + boxHeight / 2 + 0.2)
           })
           ctx.restore()
 
